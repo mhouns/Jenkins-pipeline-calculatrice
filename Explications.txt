@@ -1,0 +1,83 @@
+pipeline {
+    agent none
+    stages {
+        stage('Build') {
+            agent {
+                docker {
+                    image 'python:3.8-alpine3.16'
+                }
+            }
+            steps {
+                sh 'python3.8 -m py_compile sources/prog.py sources/calc.py'
+                stash(name: 'compiled-results', includes: 'sources/*.py*')
+            }
+        }
+    }
+}
+
+####################################################################
+Nous repérons différents éléments pipeline, agent et stages, la structure nous rappelle celle des poupées russes. Nous allons aborder les différents éléments par ordre d'apparence.
+
+Le premier bloc d'un pipeline commence toujours par pipeline. Si vous écrivez hors de ce bloc, cela générera une erreur. Ensuite, 2 éléments interviennent. Le premier est agent, qui va préciser où Jenkins va exécuter les différentes étapes du pipeline. Le premier agent rencontré va spécifier si nous aurons des agents différents pour chaque étape du pipeline, nous devrons écrire alors agent none, ou si nous pouvons prendre un agent disponible pour l'ensemble des étapes de notre pipeline, caractérisé par agent any.
+
+Le second est stages, qui comme vous le constatez, est simplement un ensemble de stage qui correspond à une phase du pipeline. Ici nous voulons réaliser l'étape Build, qui va créer les fichiers sources. Pour cela, à l'intérieur de notre stage Build, nous spécifions en premier quel agent nous allons utiliser, en accord avec le premier agent que nous avons réglé à none. L'agent utilisé sera un conteneur Docker avec python3.8. À la suite du bloc agent, nous avons la section steps, qui contient l'ensemble des actions que nous allons accomplir. Vous remarquez à l'intérieur de steps, la consigne sh 'python3.8 -m py_compile sources/prog.py sources/calc.py'. À l'aide de cette commande, nous nous retrouvons dans le shell associé au conteneur Docker, où nous pouvons utiliser la commande entre guillemets simples. Cette manière d'écrire nous rappelle ce que nous avions écrit avec un Freestyle Project via le bouton Add Build Step. Notre commande Python crée des fichiers en byte de prog.py et calc.py. Vous pouvez retrouver la liste des commandes que vous pouvez inclure dans le bloc steps. Enfin nous avons l'instruction stash qui sauvegarde un ensemble de fichiers, pour un usage dans les prochaines étapes.
+
+ Le bloc steps est unique par stage, vous ne pouvez pas en écrire plusieurs.
+ ####################################################################
+ 
+        stage('Test') {
+            agent {
+                docker {
+                    image 'grihabor/pytest'
+                }
+            }
+            steps {
+                sh 'pytest -v --junit-xml test-reports/results.xml sources/test_calc.py'
+            }
+            post {
+                always {
+                    junit "test-reports/results.xml"
+                }
+            }
+        }
+        
+ ####################################################################       
+ Nous reprenons l'écriture précédente. Nous ajoutons à la suite du stage Build, un stage Test. Commençons par expliciter le bloc agent de ce morceau de notre pipeline, nous manipulons à nouveau un conteneur Docker relatif aux tests unitaires pour des programmes Python. Ensuite, la subdivision steps qui va donc exécuter la commande pour réaliser des tests Python. Par contre, nous avons une nouveauté ici, avec l'élément supplémentaire post. Dans ce bloc, nous détaillons les actions que nous voulons à la suite de l'aboutissement du stage Test. Il y a plusieurs sous-sections possibles, nous allons simplement en exposer 3 mais si vous êtes curieux, vous pouvez les découvrir ici.
+
+    failure : Si l'étape de votre pipeline échoue, alors les instructions à l'intérieur de ce bloc seront exécutées. Par exemple, vous pourriez faire un simple affichage 'Build Failed', de la manière suivante : echo 'Build Failed' à l'intérieur d'un bloc steps.
+
+    success : À l'inverse de failure, ces instructions seront exécutées uniquement si le stage s'est bien déroulé.
+
+    always : Peu importe l'état final de votre stage, les commandes de ce bloc seront toujours exécutées. Dans notre étape Test, nous produisons un fichier XML sur les résultats des tests unitaires opérés via la consigne junit.
+####################################################################
+
+        stage('Deliver') {
+            agent any
+            environment {
+                VOLUME = '$(pwd)/sources:/src'
+                IMAGE = 'cdrx/pyinstaller-linux'
+            }
+            steps {
+                dir(path: env.BUILD_ID) {
+                    unstash(name: 'compiled-results')
+                    sh "docker run --rm -v ${VOLUME} ${IMAGE} 'pyinstaller -F prog.py'"
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts "${env.BUILD_ID}/sources/dist/prog"
+                }
+            }
+        }
+####################################################################
+Contrairement aux précédentes phases, nous réglons la section agent à any, ce qui signifie que les instructions de cette stage vont s'exécuter sur n'importe quel environnement disponible. La clause environement permet de définir des variables d'environnement pour cette stage. On définit notamment un volume à utiliser pour le conteneur pyinstaller-linux. pyinstaller permet de produire un exécutable à partir des fichiers bytes.
+
+Dans la section steps, nous nous plaçons tout d'abord dans le répertoire relatif au numéro d'exécution du pipeline via l'instruction dir, puis nous utilisons unstash pour restaurer les fichiers préalablement sauvegardés via stash dans la stage de Build. Enfin, nous produisons l'exécutable via le conteneur Docker pyinstaller.
+
+On peut vérifier que les fichiers ont bien été produits en allant directement observer le container.
+docker exec -it jenkins-blueocean bash
+cd var/jenkins_home/workspace
+C'est dans ce répertoire que vous pouvez retrouver les fichiers créés par vos pipelines. Dans le dossier correspondant au nom de la pipeline que vous venez d'exécuter, vous retrouverez différents dossiers avec les numéros des builds, des fichiers tels que le Jenkinsfile etc...
+
+Enfin, l'utilisation de la commande archiveArtifacts dans les instructions de post stage permet, en cas de succès, d'archiver le fichier exécutable prog en tant qu'artifact . 
+####################################################################

@@ -9,7 +9,7 @@ pipeline {
             }
             steps {
                 sh 'python3.8 -m py_compile sources/prog.py sources/calc.py'
-                echo 'Hello Word with Webhook option'
+                echo 'Hello Word with Webhook option test 2'
                 stash(name: 'compiled-results', includes: 'sources/*.py*')
             }
         }
